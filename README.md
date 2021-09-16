@@ -1,4 +1,4 @@
-# Idempotency - A Go middleware for idempotency in HTTP
+# Idempotency - A middleware for idempotency
 
 This is a middleware that implements an RFC draft for
 [idempotency-key-header](https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header).
