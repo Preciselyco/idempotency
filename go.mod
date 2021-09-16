@@ -1,3 +1,3 @@
-module github.com/antonlindstrom/idempotency
+module github.com/Preciselyco/idempotency
 
 go 1.17
