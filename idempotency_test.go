@@ -1,6 +1,7 @@
 package idempotency
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,7 +18,7 @@ func newIncompleteStorage() Storage {
 }
 
 // Complete is not set so that all requests are InProgress.
-func (f *incompleteStorage) Complete(key string) error {
+func (f *incompleteStorage) Complete(ctx context.Context, key string) error {
 	return nil
 }
 

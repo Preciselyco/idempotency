@@ -39,6 +39,7 @@ func New(storage Storage, restorer func(idempotencyKey string, w http.ResponseWr
 // * TODO: Implement Link: <https://developer.example.com/idempotency>; rel="describedby"; type="text/html"
 func (s *state) Verify(next http.Handler) http.Handler {
 	fn := func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
 		idempotencyKey := r.Header.Get("Idempotency-Key")
 
 		if idempotencyKey == "" {
@@ -46,7 +47,7 @@ func (s *state) Verify(next http.Handler) http.Handler {
 			return
 		}
 
-		status, err := s.storage.Get(idempotencyKey)
+		status, err := s.storage.Get(ctx, idempotencyKey)
 		if err != nil {
 			http.Error(w, fmt.Errorf("could not process request to get Idempotency-Key: %w", err).Error(), http.StatusInternalServerError)
 			return
@@ -56,7 +57,7 @@ func (s *state) Verify(next http.Handler) http.Handler {
 		// process further.
 		if status == nil {
 			// Add the key right away.
-			err = s.storage.Add(idempotencyKey)
+			err = s.storage.Add(ctx, idempotencyKey)
 			if err != nil {
 				http.Error(w, fmt.Errorf("could not process request to save Idempotency-Key: %w", err).Error(), http.StatusInternalServerError)
 				return
@@ -66,7 +67,7 @@ func (s *state) Verify(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 
 			// Complete the request.
-			err = s.storage.Complete(idempotencyKey)
+			err = s.storage.Complete(ctx, idempotencyKey)
 			if err != nil {
 				http.Error(w, fmt.Errorf("could not complete request: %w", err).Error(), http.StatusInternalServerError)
 			}
