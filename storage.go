@@ -62,19 +62,37 @@ func (m *memoryStorage) Complete(ctx context.Context, key string) error {
 }
 
 type redisStorage struct {
-	client *redis.Client
-	expiry time.Duration
+	client    *redis.Client
+	expiry    time.Duration
+	keyPrefix string
 }
 
-const keyPrefix = "idemp:"
+// RedisStorageOption is the signature for functional options for the Redis
+// storage.
+type RedisStorageOption func(*redisStorage)
+
+func WithKeyPrefix(prefix string) RedisStorageOption {
+	return func(rs *redisStorage) {
+		rs.keyPrefix = prefix
+	}
+}
 
 // NewMemoryStorage creates a Redis storage for Idempotency-Keys to be able
 // to provide a distrigbuted state of the keys.
-func NewRedisStorage(client *redis.Client, expiry time.Duration) *redisStorage {
-	return &redisStorage{
-		client: client,
-		expiry: expiry,
+func NewRedisStorage(client *redis.Client, expiry time.Duration, opts ...RedisStorageOption) *redisStorage {
+	s := &redisStorage{
+		client:    client,
+		expiry:    expiry,
+		keyPrefix: "idemp:",
 	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+
+	return s
 }
 
 // Add inserts the initial state of a request with an idempotency key.
@@ -82,7 +100,7 @@ func (s *redisStorage) Add(ctx context.Context, key string) error {
 	// We use SETNX in order to handle a race condition where the keys can be
 	// checked by two processes and find that they do not exist, after which both
 	// try to write the key.
-	res, err := s.client.SetNX(ctx, keyPrefix+key, "in-process", s.expiry).Result()
+	res, err := s.client.SetNX(ctx, s.keyPrefix+key, "in-process", s.expiry).Result()
 	if err != nil {
 		return fmt.Errorf("failed to set the key %q in redis: %w", key, err)
 	}
@@ -95,7 +113,7 @@ func (s *redisStorage) Add(ctx context.Context, key string) error {
 
 // Get fetches the RequestStatus for an idempotency key.
 func (s *redisStorage) Get(ctx context.Context, key string) (*RequestStatus, error) {
-	res, err := s.client.Get(ctx, keyPrefix+key).Result()
+	res, err := s.client.Get(ctx, s.keyPrefix+key).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
@@ -111,7 +129,7 @@ func (s *redisStorage) Get(ctx context.Context, key string) (*RequestStatus, err
 // completed and that we should serve the result we got from a previous
 // request.
 func (s *redisStorage) Complete(ctx context.Context, key string) error {
-	_, err := s.client.Set(ctx, keyPrefix+key, "done", redis.KeepTTL).Result()
+	_, err := s.client.Set(ctx, s.keyPrefix+key, "done", redis.KeepTTL).Result()
 	if err != nil {
 		return fmt.Errorf("failed to update the key %q in redis: %w", key, err)
 	}
