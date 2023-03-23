@@ -12,20 +12,49 @@ type RequestStatus struct {
 	InProcess bool
 }
 
+// Option is the functional option signature for configuring idempotency.
+type Option func(*state)
+
 type state struct {
-	storage  Storage
-	restorer func(idempotencyKey string, w http.ResponseWriter, r *http.Request)
+	storage      Storage
+	restorer     func(idempotencyKey string, w http.ResponseWriter, r *http.Request)
+	errResponder func(err error, status int, w http.ResponseWriter, r *http.Request)
 }
 
-// New creates a new idempotency state with a storage and a restorer to be
-// able to look up the Idempotency-Keys that has been seen and the restorer to
-// get back the previous status and response when a request has been
-// completed.
-func New(storage Storage, restorer func(idempotencyKey string, w http.ResponseWriter, r *http.Request)) *state {
-	return &state{
-		storage:  storage,
-		restorer: restorer,
+// WithRestorer configures the function that restores a previous payload from
+// storage.
+func WithRestorer(f func(idempotencyKey string, w http.ResponseWriter, r *http.Request)) Option {
+	return func(s *state) {
+		s.restorer = f
 	}
+}
+
+// WithErrorResponder configures a function that responds to the client
+// whenever an error occurs.
+func WithErrorResponder(f func(err error, status int, w http.ResponseWriter, r *http.Request)) Option {
+	return func(s *state) {
+		s.errResponder = f
+	}
+}
+
+// New creates a new idempotency state.
+func New(storage Storage, opts ...Option) *state {
+	s := &state{
+		storage: storage,
+		restorer: func(idempotencyKey string, w http.ResponseWriter, r *http.Request) {
+		},
+		errResponder: func(err error, status int, w http.ResponseWriter, r *http.Request) {
+			http.Error(w, err.Error(), status)
+		},
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(s)
+		}
+	}
+
+	return s
 }
 
 // Verify verifies the contents of the Idempotency-Key to make sure the
@@ -43,13 +72,13 @@ func (s *state) Verify(next http.Handler) http.Handler {
 		idempotencyKey := r.Header.Get("Idempotency-Key")
 
 		if idempotencyKey == "" {
-			http.Error(w, fmt.Errorf("no Idempotency-Key set").Error(), http.StatusBadRequest)
+			s.errResponder(fmt.Errorf("no Idempotency-Key set"), http.StatusBadRequest, w, r)
 			return
 		}
 
 		status, err := s.storage.Get(ctx, idempotencyKey)
 		if err != nil {
-			http.Error(w, fmt.Errorf("could not process request to get Idempotency-Key: %w", err).Error(), http.StatusInternalServerError)
+			s.errResponder(fmt.Errorf("could not process request to get Idempotency-Key: %w", err), http.StatusInternalServerError, w, r)
 			return
 		}
 
@@ -59,7 +88,7 @@ func (s *state) Verify(next http.Handler) http.Handler {
 			// Add the key right away.
 			err = s.storage.Add(ctx, idempotencyKey)
 			if err != nil {
-				http.Error(w, fmt.Errorf("could not process request to save Idempotency-Key: %w", err).Error(), http.StatusInternalServerError)
+				s.errResponder(fmt.Errorf("could not process request to save Idempotency-Key: %w", err), http.StatusInternalServerError, w, r)
 				return
 			}
 
@@ -69,14 +98,14 @@ func (s *state) Verify(next http.Handler) http.Handler {
 			// Complete the request.
 			err = s.storage.Complete(ctx, idempotencyKey)
 			if err != nil {
-				http.Error(w, fmt.Errorf("could not complete request: %w", err).Error(), http.StatusInternalServerError)
+				s.errResponder(fmt.Errorf("could not complete request: %w", err), http.StatusInternalServerError, w, r)
 			}
 			return
 		}
 
 		// Conflict if it is in process.
 		if status.InProcess {
-			http.Error(w, "request already in progress", http.StatusConflict)
+			s.errResponder(fmt.Errorf("request already in progress"), http.StatusConflict, w, r)
 			return
 		}
 

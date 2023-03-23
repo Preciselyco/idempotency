@@ -23,9 +23,9 @@ func (f *incompleteStorage) Complete(ctx context.Context, key string) error {
 }
 
 func TestVerify(t *testing.T) {
-	testRestorer := func(idempotencyKey string, w http.ResponseWriter, r *http.Request) {
+	testRestorer := WithRestorer(func(idempotencyKey string, w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	}
+	})
 
 	tests := []struct {
 		name           string
