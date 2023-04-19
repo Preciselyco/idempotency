@@ -62,7 +62,7 @@ func (m *memoryStorage) Complete(ctx context.Context, key string) error {
 }
 
 type redisStorage struct {
-	client    *redis.Client
+	client    redis.UniversalClient
 	expiry    time.Duration
 	keyPrefix string
 }
@@ -79,7 +79,7 @@ func WithKeyPrefix(prefix string) RedisStorageOption {
 
 // NewMemoryStorage creates a Redis storage for Idempotency-Keys to be able
 // to provide a distrigbuted state of the keys.
-func NewRedisStorage(client *redis.Client, expiry time.Duration, opts ...RedisStorageOption) *redisStorage {
+func NewRedisStorage(client redis.UniversalClient, expiry time.Duration, opts ...RedisStorageOption) *redisStorage {
 	s := &redisStorage{
 		client:    client,
 		expiry:    expiry,
