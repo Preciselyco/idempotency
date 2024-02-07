@@ -13,7 +13,8 @@ import (
 // Storage is a interface to implement storing and getting idempotency keys.
 // This is what actually implements the state.
 type Storage interface {
-	Add(ctx context.Context, key string) error
+	// Add sets the key, if it was already set the return value will be false
+	Add(ctx context.Context, key string) (bool, error)
 	Get(ctx context.Context, key string) (*RequestStatus, error)
 	Complete(ctx context.Context, key string) error
 }
@@ -32,13 +33,17 @@ func NewMemoryStorage() *memoryStorage {
 }
 
 // Add inserts the initial state of a request with an idempotency key.
-func (m *memoryStorage) Add(ctx context.Context, key string) error {
+func (m *memoryStorage) Add(ctx context.Context, key string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.storage[key] = &RequestStatus{InProcess: true}
+	_, ok := m.storage[key]
+	if ok {
+		return false, nil
+	}
 
-	return nil
+	m.storage[key] = &RequestStatus{InProcess: true}
+	return true, nil
 }
 
 // Get fetches the RequestStatus for an idempotency key.
@@ -77,8 +82,8 @@ func WithKeyPrefix(prefix string) RedisStorageOption {
 	}
 }
 
-// NewMemoryStorage creates a Redis storage for Idempotency-Keys to be able
-// to provide a distrigbuted state of the keys.
+// NewRedisStorage creates a Redis storage for Idempotency-Keys to be able
+// to provide a distributed state of the keys.
 func NewRedisStorage(client redis.UniversalClient, expiry time.Duration, opts ...RedisStorageOption) *redisStorage {
 	s := &redisStorage{
 		client:    client,
@@ -96,19 +101,17 @@ func NewRedisStorage(client redis.UniversalClient, expiry time.Duration, opts ..
 }
 
 // Add inserts the initial state of a request with an idempotency key.
-func (s *redisStorage) Add(ctx context.Context, key string) error {
+func (s *redisStorage) Add(ctx context.Context, key string) (bool, error) {
 	// We use SETNX in order to handle a race condition where the keys can be
 	// checked by two processes and find that they do not exist, after which both
 	// try to write the key.
 	res, err := s.client.SetNX(ctx, s.keyPrefix+key, "in-process", s.expiry).Result()
 	if err != nil {
-		return fmt.Errorf("failed to set the key %q in redis: %w", key, err)
-	}
-	if !res {
-		return fmt.Errorf("the key %q already exists in redis", key)
+		return false, fmt.Errorf("failed to set the key %q in redis: %w", key, err)
 	}
 
-	return nil
+	// res - true = the key was actually set
+	return res, nil
 }
 
 // Get fetches the RequestStatus for an idempotency key.
