@@ -85,22 +85,35 @@ func (s *state) Verify(next http.Handler) http.Handler {
 		// If the idempotency key does not exist, we do not need to
 		// process further.
 		if status == nil {
-			// Add the key right away.
-			err = s.storage.Add(ctx, idempotencyKey)
+			// Try adding the key
+			success, err := s.storage.Add(ctx, idempotencyKey)
 			if err != nil {
 				s.errResponder(fmt.Errorf("could not process request to save Idempotency-Key: %w", err), http.StatusInternalServerError, w, r)
 				return
 			}
 
-			// Run the handlers that has the actual functionality.
-			next.ServeHTTP(w, r)
+			if success {
+				// Run the handlers that has the actual functionality.
+				next.ServeHTTP(w, r)
 
-			// Complete the request.
-			err = s.storage.Complete(ctx, idempotencyKey)
-			if err != nil {
-				s.errResponder(fmt.Errorf("could not complete request: %w", err), http.StatusInternalServerError, w, r)
+				// Complete the request.
+				err = s.storage.Complete(ctx, idempotencyKey)
+				if err != nil {
+					s.errResponder(fmt.Errorf("could not complete request: %w", err), http.StatusInternalServerError, w, r)
+				}
+				return
 			}
-			return
+
+			// Couldn't set the key, try reading it again
+			status, err = s.storage.Get(ctx, idempotencyKey)
+			if err != nil {
+				s.errResponder(fmt.Errorf("could not process request to get Idempotency-Key: %w", err), http.StatusInternalServerError, w, r)
+				return
+			}
+			if status == nil {
+				s.errResponder(fmt.Errorf("failed to both get and set the Idempotency-Key %s", idempotencyKey), http.StatusInternalServerError, w, r)
+				return
+			}
 		}
 
 		// Conflict if it is in process.
